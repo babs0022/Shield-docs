@@ -23,7 +23,7 @@ If you don't have Base ETH, you can bridge from Ethereum mainnet or use an on-ra
 
 ### Step 1: Upload Your Content
 
-1. Visit [Shield](https://shield-pi.vercel.app)
+1. Visit [Shield](https://shield-app.vercel.app)
 2. Click **"Create Secure Link"**
 3. Choose whether to upload a **file** or write a **message**
 4. If uploading a file, select it from your device
@@ -39,9 +39,9 @@ Set the access rules for your secure link:
 
 1. **Recipient Address**: Enter the Ethereum address that can access this content
 2. **Expiration Time**: Set when the link should expire
-   - Options: 1 hour, 24 hours, 7 days, or custom
+   - The default is set to 3600 seconds (1 hour) and is customizable based on your preference
 3. **Max Verification Attempts**: Set how many failed access attempts before self-destructing
-   - Recommended: 3-5 attempts
+   - The default is set to 3 attempts and is customizable based on your preference
 
 <Warning>
 Once you set these rules and confirm the transaction, they are **immutable** and enforced by the smart contract.
@@ -49,7 +49,7 @@ Once you set these rules and confirm the transaction, they are **immutable** and
 
 ### Step 3: Sign Transaction & Share
 
-1. Click **"Create Policy"**
+1. Click **"Generate Link"**
 2. Your wallet (MetaMask) will prompt you to sign a transaction
 3. Confirm the transaction to create the on-chain access policy
 4. Wait for the transaction to be confirmed on Base
@@ -57,7 +57,7 @@ Once you set these rules and confirm the transaction, they are **immutable** and
 6. Share the link with your recipient via your preferred channel
 
 <Info>
-The link looks like: `https://shield-pi.vercel.app/r/<policyId>`
+The link looks like: `https://shield-app.vercel.app/r/<policyId>`
 </Info>
 
 ## How to Access a Shared File
@@ -65,7 +65,7 @@ The link looks like: `https://shield-pi.vercel.app/r/<policyId>`
 ### Step 1: Open the Shield Link
 
 1. Click on the Shield link you received
-2. You'll be redirected to the Shield verification page
+2. You'll be redirected to the Shield receiver verification page
 
 ### Step 2: Connect Your Wallet
 
