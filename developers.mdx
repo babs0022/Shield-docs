@@ -1,0 +1,343 @@
+---
+title: 'Developer Guide'
+description: 'Technical documentation for building with Shield'
+---
+
+## Developer Guide
+
+Build secure, decentralized verification systems with Shield's smart contracts and architecture.
+
+### Smart Contract
+
+#### Deployed Contract
+
+**Base Mainnet**: `0x9C7D5bB5426175D341C7B3C60D6A0220Cd5A9034`
+
+- **Explorer**: [View on BaseScan](https://basescan.org/address/0x9C7D5bB5426175D341C7B3C60D6A0220Cd5A9034)
+- **Source Code**: [Shield.sol on GitHub](https://github.com/Babs0022/SHIELD/blob/main/contracts/contracts/Shield.sol)
+- **ABI**: [Shield.json](https://github.com/Babs0022/SHIELD/blob/main/contracts/artifacts/contracts/Shield.sol/Shield.json)
+
+#### Contract Interface
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+contract Shield {
+    struct AccessPolicy {
+        address sender;
+        address recipient;
+        uint64 expiry;
+        uint32 maxAttempts;
+        uint32 attempts;
+        bool valid;
+    }
+
+    mapping(bytes32 => AccessPolicy) public policies;
+
+    event PolicyCreated(bytes32 indexed policyId, address indexed sender, address indexed recipient, uint256 expiry, uint256 maxAttempts);
+    event VerificationAttempt(bytes32 indexed policyId, bool success);
+
+    function createPolicy(bytes32 policyId, address recipient, uint256 expiry, uint256 maxAttempts) external;
+    function logAttempt(bytes32 policyId, bool success) external;
+    function isPolicyValid(bytes32 policyId) external view returns (bool);
+}
+```
+
+### Architecture Overview
+
+Shield combines client-side encryption with blockchain-based access control:
+
+```
+1. User Upload
+   ↓
+2. Client-Side Encryption (AES-256)
+   • Encryption happens in browser
+   • Keys never touch the server
+   • Zero-knowledge architecture
+   ↓
+3. IPFS Storage (via Pinata)
+   • Encrypted content uploaded to IPFS
+   • Decentralized, censorship-resistant
+   • Returns content hash (CID)
+   ↓
+4. Create Access Policy On-Chain
+   • Policy ID = hash(content + metadata)
+   • Stores: recipient, expiry, maxAttempts
+   • Immutable on Base blockchain
+   ↓
+5. Generate Share Link
+   • Link contains: IPFS hash + policy ID
+   • Sent to intended recipient
+   ↓
+6. Recipient Access
+   • Retrieves encrypted content from IPFS
+   • Verifies policy on-chain
+   • Logs attempt via smart contract
+   ↓
+7. Client-Side Decryption
+   • If policy valid, decrypt in browser
+   • View content securely
+```
+
+### Integration Examples
+
+#### JavaScript/ethers.js
+
+```javascript
+import { ethers } from 'ethers';
+
+// Contract setup
+const SHIELD_ADDRESS = '0x9C7D5bB5426175D341C7B3C60D6A0220Cd5A9034';
+const SHIELD_ABI = [
+  'function createPolicy(bytes32 policyId, address recipient, uint256 expiry, uint256 maxAttempts) external',
+  'function logAttempt(bytes32 policyId, bool success) external',
+  'function isPolicyValid(bytes32 policyId) external view returns (bool)',
+  'event PolicyCreated(bytes32 indexed policyId, address indexed sender, address indexed recipient, uint256 expiry, uint256 maxAttempts)'
+];
+
+// Create a policy
+async function createAccessPolicy(provider, recipient, expiryTime, maxAttempts) {
+  const signer = await provider.getSigner();
+  const shield = new ethers.Contract(SHIELD_ADDRESS, SHIELD_ABI, signer);
+  
+  // Generate unique policy ID
+  const policyId = ethers.id(Date.now().toString() + recipient);
+  
+  // Calculate expiry timestamp
+  const expiry = Math.floor(Date.now() / 1000) + expiryTime;
+  
+  // Create policy on-chain
+  const tx = await shield.createPolicy(policyId, recipient, expiry, maxAttempts);
+  await tx.wait();
+  
+  console.log('Policy created:', policyId);
+  return policyId;
+}
+
+// Check if policy is valid
+async function checkPolicy(provider, policyId) {
+  const shield = new ethers.Contract(SHIELD_ADDRESS, SHIELD_ABI, provider);
+  const isValid = await shield.isPolicyValid(policyId);
+  return isValid;
+}
+```
+
+#### React Hook Example
+
+```typescript
+import { useContractWrite, useContractRead } from 'wagmi';
+import { parseEther } from 'viem';
+
+function useShieldPolicy() {
+  const { write: createPolicy } = useContractWrite({
+    address: '0x9C7D5bB5426175D341C7B3C60D6A0220Cd5A9034',
+    abi: SHIELD_ABI,
+    functionName: 'createPolicy',
+  });
+
+  const { data: isPolicyValid } = useContractRead({
+    address: '0x9C7D5bB5426175D341C7B3C60D6A0220Cd5A9034',
+    abi: SHIELD_ABI,
+    functionName: 'isPolicyValid',
+  });
+
+  return { createPolicy, isPolicyValid };
+}
+```
+
+### Technical Deep Dives
+
+#### How Self-Destruct Works
+
+Shield policies "self-destruct" through smart contract state changes:
+
+1. **On Success**: `policy.valid = false` immediately after successful access
+2. **On Max Attempts**: `policy.valid = false` when attempts ≥ maxAttempts
+3. **On Expiry**: `block.timestamp >= policy.expiry` returns invalid
+
+This is **not** data deletion - it's state invalidation. The policy remains on-chain for audit purposes, but `isPolicyValid()` returns false.
+
+```solidity
+function logAttempt(bytes32 policyId, bool success) external {
+    AccessPolicy storage policy = policies[policyId];
+    require(policy.valid, "Policy is not valid");
+    
+    policy.attempts++;
+    
+    if (!success && policy.attempts >= policy.maxAttempts) {
+        policy.valid = false; // Self-destruct on max attempts
+    }
+    
+    if (success) {
+        policy.valid = false; // Self-destruct on success
+    }
+}
+```
+
+#### Zero-Knowledge Backend
+
+Shield's "zero-knowledge" claim means:
+
+**What the Backend Knows:**
+- IPFS hash of encrypted content
+- Policy ID
+- Blockchain transaction history
+
+**What the Backend NEVER Knows:**
+- Encryption keys (generated client-side)
+- Decrypted content
+- Original file contents
+
+**How It Works:**
+1. Browser generates AES-256 key using Web Crypto API
+2. Content encrypted locally before upload
+3. Only encrypted blob sent to IPFS
+4. Decryption key shared out-of-band (in share link)
+5. Recipient's browser decrypts locally
+
+The server is "blind" to actual content - it only facilitates storage and access control.
+
+#### IPFS Integration
+
+Shield uses Pinata for IPFS pinning:
+
+```javascript
+// Upload encrypted content to IPFS
+async function uploadToIPFS(encryptedBlob) {
+  const formData = new FormData();
+  formData.append('file', encryptedBlob);
+  
+  const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${PINATA_JWT}`
+    },
+    body: formData
+  });
+  
+  const { IpfsHash } = await response.json();
+  return IpfsHash; // Content ID (CID)
+}
+```
+
+### Extending Shield
+
+#### Custom Policy Logic
+
+You can extend Shield's policy system:
+
+```solidity
+// Example: Time-based access with daily limits
+contract ExtendedShield is Shield {
+    mapping(bytes32 => mapping(uint256 => uint32)) public dailyAttempts;
+    
+    function createDailyLimitPolicy(
+        bytes32 policyId,
+        address recipient,
+        uint256 expiry,
+        uint256 maxAttempts,
+        uint32 dailyLimit
+    ) external {
+        createPolicy(policyId, recipient, expiry, maxAttempts);
+        // Add custom daily limit logic
+    }
+}
+```
+
+#### Integration Patterns
+
+**Pattern 1: NFT-Gated Access**
+```solidity
+require(nftContract.balanceOf(msg.sender) > 0, "Must own NFT");
+createPolicy(policyId, recipient, expiry, maxAttempts);
+```
+
+**Pattern 2: Token-Based Verification**
+```solidity
+require(tokenContract.balanceOf(recipient) >= minBalance, "Insufficient tokens");
+```
+
+**Pattern 3: Multi-Signature Policies**
+```solidity
+require(signatures.length >= threshold, "Not enough signatures");
+```
+
+### Security Considerations
+
+#### Best Practices
+
+1. **Policy ID Generation**: Use cryptographically secure random bytes
+2. **Expiry Times**: Set reasonable expiry (default: 1 hour)
+3. **Max Attempts**: Limit to prevent brute force (default: 3)
+4. **Recipient Validation**: Ensure recipient address is correct
+5. **Event Monitoring**: Listen for `VerificationAttempt` events
+
+#### Known Limitations
+
+- **No Data Deletion**: Encrypted content persists on IPFS
+- **Policy Visibility**: All policies are public on-chain
+- **Gas Costs**: Each attempt costs gas on Base
+- **Client-Side Trust**: Encryption security depends on browser implementation
+
+### Audit Status
+
+**Current Status**: Not yet audited
+
+**Planned Audits**: Q1 2025
+
+The Shield smart contract is simple (58 lines) but has not undergone formal security audit. Use at your own risk in production.
+
+**Security Measures in Place:**
+- Minimal attack surface
+- No fund handling
+- Simple state machine
+- Deployed on Base (Ethereum L2)
+- Contract verified on BaseScan
+
+### Testing
+
+Test the contract on Base Sepolia testnet:
+
+**Testnet Contract**: Check [GitHub](https://github.com/Babs0022/SHIELD) for testnet deployments
+
+```javascript
+// Example test
+import { expect } from 'chai';
+import { ethers } from 'hardhat';
+
+describe('Shield Contract', function () {
+  it('Should create and validate policy', async function () {
+    const [owner, recipient] = await ethers.getSigners();
+    const Shield = await ethers.getContractFactory('Shield');
+    const shield = await Shield.deploy();
+    
+    const policyId = ethers.id('test-policy');
+    const expiry = Math.floor(Date.now() / 1000) + 3600;
+    
+    await shield.createPolicy(policyId, recipient.address, expiry, 3);
+    const isValid = await shield.isPolicyValid(policyId);
+    
+    expect(isValid).to.be.true;
+  });
+});
+```
+
+### Additional Resources
+
+- **Full Source Code**: [GitHub Repository](https://github.com/Babs0022/SHIELD)
+- **Contract ABI**: [Shield.json](https://github.com/Babs0022/SHIELD/blob/main/contracts/artifacts/contracts/Shield.sol/Shield.json)
+- **Base Network Docs**: [docs.base.org](https://docs.base.org)
+- **IPFS Documentation**: [docs.ipfs.tech](https://docs.ipfs.tech)
+
+### Support
+
+For technical questions or integration help:
+
+- **GitHub Issues**: [Report bugs or request features](https://github.com/Babs0022/SHIELD/issues)
+- **Email**: [eliope933@gmail.com](mailto:eliope933@gmail.com)
+- **Twitter**: [@babsbuild](https://x.com/babsbuild)
+
+---
+
+**Ready to build?** Check out the [Quickstart](/quickstart) for a step-by-step guide or explore the [FAQs](/faqs) for common questions.
